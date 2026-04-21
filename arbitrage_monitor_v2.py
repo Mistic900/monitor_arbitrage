@@ -42,14 +42,34 @@ from aiohttp import web
 class Config:
     """Configuration management"""
     
-    # RPC Endpoints (priority order)
+    # RPC Endpoints (priority order) - read from environment variables
     RPC_ENDPOINTS = [
-        {"type": "wss", "url": "wss://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY", "name": "alchemy_wss"},
-        {"type": "wss", "url": "wss://polygon-mainnet.infura.io/ws/v3/YOUR_KEY", "name": "infura_wss"},
-        {"type": "http", "url": "https://polygon-rpc.com", "name": "polygon_public"},
-        {"type": "http", "url": "https://rpc-mainnet.matic.network", "name": "matic_public"},
+        {
+            "type": "wss",
+            "url": os.getenv("RPC_WSS_PRIMARY", "wss://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY"),
+            "name": "primary_wss"
+        },
+        {
+            "type": "wss",
+            "url": os.getenv("RPC_WSS_BACKUP", "wss://polygon-mainnet.infura.io/ws/v3/YOUR_KEY"),
+            "name": "backup_wss"
+        },
+        {
+            "type": "wss",
+            "url": os.getenv("ALCHEMY_WSS", "wss://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY"),
+            "name": "alchemy_wss"
+        },
+        {
+            "type": "http",
+            "url": os.getenv("POLYGON_PUBLIC", "https://polygon-rpc.com"),
+            "name": "polygon_public"
+        },
+        {
+            "type": "http",
+            "url": os.getenv("MATIC_PUBLIC", "https://rpc-mainnet.matic.network"),
+            "name": "matic_public"
+        },
     ]
-    
     # Monitoring
     CHECK_INTERVAL = 0.05  # 50ms base interval
     HEARTBEAT_INTERVAL = 10  # seconds
