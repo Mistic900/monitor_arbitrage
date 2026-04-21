@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  arbitrage-monitor:
+    build: .
+    container_name: polygon-arbitrage-monitor
+    restart: unless-stopped
+    
+    # Environment variables
+    environment:
+      # RPC endpoints (REPLACE WITH YOUR KEYS!)
+      - RPC_WSS_PRIMARY=wss://lb.drpc.live/polygon/AmMKJJVEBECyn4FHsTnkxTumcMibPZER8ZlFtiKh6MJI
+      - RPC_WSS_BACKUP=wss://polygon-mainnet.g.alchemy.com/v2/CpcqJ3bb2z5TcWhIOk1OI
+      
+      # Telegram (REPLACE WITH YOUR BOT TOKEN AND CHAT ID!)
+      - TELEGRAM_TOKEN=YOUR_BOT_TOKEN
+      - TELEGRAM_CHAT_ID=YOUR_CHAT_ID
+      
+      # Profit thresholds
+      - MIN_PROFIT_USD=2
+      
+      # Monitoring
+      - CHECK_INTERVAL=0.05
+      
+    # Volumes for persistence
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    
+    # Ports
+    ports:
+      - "8080:8080"  # Health check
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+    
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8080/health', timeout=5.0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  data:
+  logs:
