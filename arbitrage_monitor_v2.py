@@ -16,8 +16,8 @@ from eth_utils import keccak
 # ============================================================
 
 # RPC endpoints
-RPC_WSS_PRIMARY = "wss://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY"
-RPC_WSS_BACKUP  = "wss://polygon-mainnet.infura.io/ws/v3/YOUR_KEY"
+RPC_HTTP_PRIMARY  = "https://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY"
+RPC_HTTP_BACKUP   = "https://polygon-mainnet.infura.io/v3/YOUR_KEY"
 RPC_HTTP_FALLBACK = "https://polygon-rpc.com"
 
 # Monitoring Configuration
@@ -110,29 +110,29 @@ async def telegram_send(message: str):
         logger.error(f"Telegram send failed: {e}")
 
 # ============================================================
-# WEB3 SETUP – WSS + fallback
+# WEB3 SETUP – HTTP providers with fallback
 # ============================================================
 
 class Web3Manager:
     def __init__(self):
-        self.current_rpc = "primary_wss"
+        self.current_rpc = "primary_http"
         self.w3 = None
         self.last_heartbeat = 0
         self.heartbeat_interval = 10  # sec
         self.lock = asyncio.Lock()
 
     async def init(self):
-        await self._connect("primary_wss")
+        await self._connect("primary_http")
 
     async def _connect(self, which: str):
-        if which == "primary_wss":
-            logger.info("Connecting to PRIMARY WSS...")
-            self.w3 = AsyncWeb3(AsyncWeb3.AsyncWebsocketProvider(RPC_WSS_PRIMARY))
-            self.current_rpc = "primary_wss"
-        elif which == "backup_wss":
-            logger.info("Connecting to BACKUP WSS...")
-            self.w3 = AsyncWeb3(AsyncWeb3.AsyncWebsocketProvider(RPC_WSS_BACKUP))
-            self.current_rpc = "backup_wss"
+        if which == "primary_http":
+            logger.info("Connecting to PRIMARY HTTP...")
+            self.w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(RPC_HTTP_PRIMARY))
+            self.current_rpc = "primary_http"
+        elif which == "backup_http":
+            logger.info("Connecting to BACKUP HTTP...")
+            self.w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(RPC_HTTP_BACKUP))
+            self.current_rpc = "backup_http"
         elif which == "http":
             logger.info("Connecting to HTTP fallback...")
             self.w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(RPC_HTTP_FALLBACK))
@@ -164,11 +164,11 @@ class Web3Manager:
                 await self._failover()
 
     async def _failover(self):
-        order = ["primary_wss", "backup_wss", "http"]
+        order = ["primary_http", "backup_http", "http"]
         try_next = {
-            "primary_wss": "backup_wss",
-            "backup_wss": "http",
-            "http": "primary_wss"
+            "primary_http": "backup_http",
+            "backup_http": "http",
+            "http": "primary_http"
         }
         next_rpc = try_next[self.current_rpc]
         try:
