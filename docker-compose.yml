@@ -9,15 +9,15 @@ services:
     # Environment variables
     environment:
       # RPC endpoints (REPLACE WITH YOUR KEYS!)
-      - RPC_WSS_PRIMARY=wss://lb.drpc.live/polygon/AmMKJJVEBECyn4FHsTnkxTumcMibPZER8ZlFtiKh6MJI
-      - RPC_WSS_BACKUP=wss://polygon-mainnet.g.alchemy.com/v2/CpcqJ3bb2z5TcWhIOk1OI
+      - RPC_WSS_PRIMARY=wss://polygon-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_KEY
+      - RPC_WSS_BACKUP=wss://polygon-mainnet.infura.io/ws/v3/YOUR_INFURA_KEY
       
       # Telegram (REPLACE WITH YOUR BOT TOKEN AND CHAT ID!)
       - TELEGRAM_TOKEN=YOUR_BOT_TOKEN
       - TELEGRAM_CHAT_ID=YOUR_CHAT_ID
       
       # Profit thresholds
-      - MIN_PROFIT_USD=2
+      - MIN_PROFIT_USD=20
       
       # Monitoring
       - CHECK_INTERVAL=0.05
