@@ -275,7 +275,7 @@ MULTICALL_ABI = [{
     "type": "function"
 }]
 
-async def multicall(calls: List[Dict]) -> List:
+async def multicall(calls: List[tuple]) -> List:
     contract = get_w3().eth.contract(address=MULTICALL, abi=MULTICALL_ABI)
     for attempt in range(MAX_RETRIES):
         try:
@@ -513,30 +513,30 @@ async def snapshot_route(route: Dict) -> Optional[Dict]:
     # step1
     if step1_pool_info["type"] == "v3":
         calls.extend([
-            {"target": step1_pool_info["address"], "callData": SEL_SLOT0},
-            {"target": step1_pool_info["address"], "callData": SEL_LIQUIDITY},
+            (step1_pool_info["address"], SEL_SLOT0),
+            (step1_pool_info["address"], SEL_LIQUIDITY),
         ])
     elif step1_pool_info["type"] == "v2":
         calls.extend([
-            {"target": step1_pool_info["address"], "callData": SEL_GETRES},
-            {"target": step1_pool_info["address"], "callData": SEL_TOKEN0},
+            (step1_pool_info["address"], SEL_GETRES),
+            (step1_pool_info["address"], SEL_TOKEN0),
         ])
     elif step1_pool_info["type"] == "balancer":
-        calls.append({"target": step1_pool_info["address"], "callData": SEL_GETPOOLID})
+        calls.append((step1_pool_info["address"], SEL_GETPOOLID))
 
     # step2
     if step2_pool_info["type"] == "v3":
         calls.extend([
-            {"target": step2_pool_info["address"], "callData": SEL_SLOT0},
-            {"target": step2_pool_info["address"], "callData": SEL_LIQUIDITY},
+            (step2_pool_info["address"], SEL_SLOT0),
+            (step2_pool_info["address"], SEL_LIQUIDITY),
         ])
     elif step2_pool_info["type"] == "v2":
         calls.extend([
-            {"target": step2_pool_info["address"], "callData": SEL_GETRES},
-            {"target": step2_pool_info["address"], "callData": SEL_TOKEN0},
+            (step2_pool_info["address"], SEL_GETRES),
+            (step2_pool_info["address"], SEL_TOKEN0),
         ])
     elif step2_pool_info["type"] == "balancer":
-        calls.append({"target": step2_pool_info["address"], "callData": SEL_GETPOOLID})
+        calls.append((step2_pool_info["address"], SEL_GETPOOLID))
 
     try:
         result = await multicall(calls)
