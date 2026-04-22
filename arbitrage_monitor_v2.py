@@ -4,11 +4,10 @@ import sqlite3
 import logging
 import time
 import random
-from datetime import datetime
 from typing import Dict, List, Optional
 
 import httpx
-from web3 import AsyncWeb3
+from web3 import AsyncWeb3, Web3
 from eth_abi import decode
 from eth_utils import keccak
 from logging.handlers import RotatingFileHandler
@@ -71,6 +70,7 @@ db.execute('''
 ''')
 db.commit()
 
+
 def log_opportunity(route_name: str, tick: int, gross_profit: int,
                     net_profit: int, gas_cost: float, amount_in: int):
     db.execute('''
@@ -83,6 +83,7 @@ def log_opportunity(route_name: str, tick: int, gross_profit: int,
 # ============================================================
 # TELEGRAM
 # ============================================================
+
 
 async def telegram_send(message: str):
     if not ENABLE_TELEGRAM or not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -106,18 +107,20 @@ async def telegram_send(message: str):
 # WEB3 MANAGER – HTTP only, cu fallback
 # ============================================================
 
+
 def _wss_to_https(url: str) -> str:
     if url.startswith("wss://"):
         return "https://" + url[len("wss://"):]
     return url
 
+
 def _build_rpc_endpoints() -> List[Dict]:
     env_vars = [
-        ("RPC_WSS_PRIMARY",  "primary"),
-        ("RPC_WSS_BACKUP",   "backup"),
-        ("ALCHEMY_WSS",      "alchemy"),
-        ("POLYGON_PUBLIC",   "polygon_public"),
-        ("MATIC_PUBLIC",     "matic_public"),
+        ("RPC_WSS_PRIMARY", "primary"),
+        ("RPC_WSS_BACKUP", "backup"),
+        ("ALCHEMY_WSS", "alchemy"),
+        ("POLYGON_PUBLIC", "polygon_public"),
+        ("MATIC_PUBLIC", "matic_public"),
     ]
     endpoints = []
     for env_name, label in env_vars:
@@ -131,6 +134,7 @@ def _build_rpc_endpoints() -> List[Dict]:
 
     endpoints.append({"label": "fallback", "url": RPC_HTTP_FALLBACK})
     return endpoints
+
 
 class Web3Manager:
     def __init__(self):
@@ -196,12 +200,15 @@ class Web3Manager:
                 except Exception as e2:
                     logger.error(f"Fallback connect also failed: {e2}")
 
+
 web3_manager = Web3Manager()
+
 
 def get_w3() -> AsyncWeb3:
     if web3_manager.w3 is None:
         raise RuntimeError("Web3 not initialized")
     return web3_manager.w3
+
 
 client = httpx.AsyncClient(timeout=10.0)
 
@@ -209,8 +216,10 @@ client = httpx.AsyncClient(timeout=10.0)
 # HELPERS & SELECTORS
 # ============================================================
 
+
 def selector(sig: str) -> str:
     return "0x" + keccak(text=sig).hex()[:8]
+
 
 SEL_SLOT0 = selector("slot0()")
 SEL_LIQUIDITY = selector("liquidity()")
@@ -244,9 +253,10 @@ MULTICALL_ABI = [{
     "type": "function"
 }]
 
+
 async def multicall(calls: List[Dict], require_success: bool = False) -> List:
     """
-    calls: [{"target": address_str, "callData": bytes}, ...]
+    calls: [{"target": checksum_address, "callData": bytes}, ...]
     return: [(success: bool, returnData: bytes), ...]
     """
     contract = get_w3().eth.contract(address=MULTICALL, abi=MULTICALL_ABI)
@@ -291,6 +301,7 @@ QUOTER_ABI = [{
     "type": "function"
 }]
 
+
 async def simulate_v3_accurate(token_in: str, token_out: str, amount_in: int, fee: int = 500) -> int:
     quoter = get_w3().eth.contract(address=QUOTER_V2, abi=QUOTER_ABI)
     path_bytes = (
@@ -333,6 +344,7 @@ BALANCER_VAULT_ABI = [{
     "outputs": [{"name": "", "type": "int256[]"}]
 }]
 
+
 async def simulate_balancer(pool_id: bytes, token_in: str, token_out: str, amount_in: int) -> int:
     vault = get_w3().eth.contract(address=BALANCER_VAULT, abi=BALANCER_VAULT_ABI)
     swaps = [{
@@ -345,6 +357,8 @@ async def simulate_balancer(pool_id: bytes, token_in: str, token_out: str, amoun
     assets = [token_in, token_out]
     try:
         result = await vault.functions.queryBatchSwap(0, swaps, assets).call()
+        # result este int256[] cu lungime = len(assets)
+        # pentru 2 assets, index 1 este out amount
         amount_out = abs(int(result[1]))
         if amount_out == 0:
             logger.debug(f"Balancer quote returned 0 for poolId {pool_id.hex()[:10]}")
@@ -357,6 +371,7 @@ async def simulate_balancer(pool_id: bytes, token_in: str, token_out: str, amoun
 # ============================================================
 # UNISWAP V2
 # ============================================================
+
 
 def simulate_v2(reserve0: int, reserve1: int, token0: str, token_in: str, amount_in: int) -> int:
     is_token0 = token_in.lower() == token0.lower()
@@ -373,6 +388,7 @@ def simulate_v2(reserve0: int, reserve1: int, token0: str, token_in: str, amount
 # ============================================================
 # GAS
 # ============================================================
+
 
 class GasTracker:
     def __init__(self):
@@ -398,6 +414,7 @@ class GasTracker:
         cost_usd = cost_matic * MATIC_PRICE_USD
         return cost_usd
 
+
 gas_tracker = GasTracker()
 
 # ============================================================
@@ -406,16 +423,16 @@ gas_tracker = GasTracker()
 
 USDC = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
 WETH = "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619"
-DAI  = "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063"
+DAI = "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063"
 
-POOLS = {
+POOLS: Dict[str, Dict] = {
     "UNI_V3_USDC_WETH_005": {
         "address": "0x45dDa9cb7c25131DF268515131f647d726f50608",
         "type": "v3",
         "fee": 500
     },
     "UNI_V3_USDC_WETH_03": {
-        "address": "0xA374d23C3bA9A0b3e3E3d3b5f3C2f0D0Ce1F0a5A",
+        "address": "0xA374d23C3bA9A0b3e3D3b5f3C2f0D0Ce1F0a5A",
         "type": "v3",
         "fee": 3000
     },
@@ -442,119 +459,130 @@ POOLS = {
     },
 }
 
-ROUTES = [
-    {
-    "name": "R1: UNI V3 0.05% → UNI V3 0.3% (USDC/WETH/USDC)",
-    "token_in": USDC,
-    "token_mid": WETH,
-    "amount_in": 2500 * 10**6,          # 2500 USDC
-    "min_profit": 10 * 10**6,           # 10 USDC
-    "step1_pool": "UNI_V3_USDC_WETH_005",
-    "step2_pool": "UNI_V3_USDC_WETH_03",
-    "enabled": True
-    },
-    {
-    "name": "R2: UNI V3 0.3% → BAL Weighted (USDC/WETH/USDC)",
-    "token_in": USDC,
-    "token_mid": WETH,
-    "amount_in": 3000 * 10**6,          # 3000 USDC
-    "min_profit": 12 * 10**6,           # 12 USDC
-    "step1_pool": "UNI_V3_USDC_WETH_03",
-    "step2_pool": "BAL_USDC_WETH_WEIGHTED",
-    "enabled": True
-    },
-    {
-       "name": "R3: UNI V3 0.05% → SUSHI V2 (USDC/WETH/USDC)",
-    "token_in": USDC,
-    "token_mid": WETH,
-    "amount_in": 2000 * 10**6,          # 2000 USDC
-    "min_profit": 8 * 10**6,            # 8 USDC
-    "step1_pool": "UNI_V3_USDC_WETH_005",
-    "step2_pool": "SUSHI_V2_USDC_WETH",
-    "enabled": True
-    },
-    {
-    "name": "R4: UNI V3 0.01% → BAL Stable (USDC/DAI/USDC)",
-    "token_in": USDC,
-    "token_mid": DAI,
-    "amount_in": 5000 * 10**6,          # 5000 USDC
-    "min_profit": 15 * 10**6,           # 15 USDC
-    "step1_pool": "UNI_V3_USDC_DAI_001",
-    "step2_pool": "BAL_USDC_DAI_STABLE",
-    "enabled": True
-},
-{
-    "name": "R5: BAL Stable → UNI V3 0.01% (USDC/DAI/USDC)",
-    "token_in": USDC,
-    "token_mid": DAI,
-    "amount_in": 4000 * 10**6,          # 4000 USDC
-    "min_profit": 12 * 10**6,           # 12 USDC
-    "step1_pool": "BAL_USDC_DAI_STABLE",
-    "step2_pool": "UNI_V3_USDC_DAI_001",
-    "enabled": True
-}
+# convertim toate adresele în checksum
+for pool in POOLS.values():
+    pool["address"] = Web3.to_checksum_address(pool["address"])
 
+ROUTES: List[Dict] = [
+    {
+        "name": "R1: UNI V3 0.05% → UNI V3 0.3% (USDC/WETH/USDC)",
+        "token_in": USDC,
+        "token_mid": WETH,
+        "amount_in": 2500 * 10**6,
+        "min_profit": 10 * 10**6,
+        "step1_pool": "UNI_V3_USDC_WETH_005",
+        "step2_pool": "UNI_V3_USDC_WETH_03",
+        "enabled": True
+    },
+    {
+        "name": "R2: UNI V3 0.3% → BAL Weighted (USDC/WETH/USDC)",
+        "token_in": USDC,
+        "token_mid": WETH,
+        "amount_in": 3000 * 10**6,
+        "min_profit": 12 * 10**6,
+        "step1_pool": "UNI_V3_USDC_WETH_03",
+        "step2_pool": "BAL_USDC_WETH_WEIGHTED",
+        "enabled": True
+    },
+    {
+        "name": "R3: UNI V3 0.05% → SUSHI V2 (USDC/WETH/USDC)",
+        "token_in": USDC,
+        "token_mid": WETH,
+        "amount_in": 2000 * 10**6,
+        "min_profit": 8 * 10**6,
+        "step1_pool": "UNI_V3_USDC_WETH_005",
+        "step2_pool": "SUSHI_V2_USDC_WETH",
+        "enabled": True
+    },
+    {
+        "name": "R4: UNI V3 0.01% → BAL Stable (USDC/DAI/USDC)",
+        "token_in": USDC,
+        "token_mid": DAI,
+        "amount_in": 5000 * 10**6,
+        "min_profit": 15 * 10**6,
+        "step1_pool": "UNI_V3_USDC_DAI_001",
+        "step2_pool": "BAL_USDC_DAI_STABLE",
+        "enabled": True
+    },
+    {
+        "name": "R5: BAL Stable → UNI V3 0.01% (USDC/DAI/USDC)",
+        "token_in": USDC,
+        "token_mid": DAI,
+        "amount_in": 4000 * 10**6,
+        "min_profit": 12 * 10**6,
+        "step1_pool": "BAL_USDC_DAI_STABLE",
+        "step2_pool": "UNI_V3_USDC_DAI_001",
+        "enabled": True
+    }
 ]
 
 # ============================================================
-# SNAPSHOT
+# GLOBAL SNAPSHOT CACHE (multicall batching)
 # ============================================================
 
-async def snapshot_route(route: Dict) -> Optional[Dict]:
+ROUTE_SNAPSHOTS: Dict[str, Optional[Dict]] = {}
+SNAPSHOT_LOCK = asyncio.Lock()
+
+# ============================================================
+# SNAPSHOT BUILD & PARSE
+# ============================================================
+
+
+def _to_bytes(selector_hex: str) -> bytes:
+    return bytes.fromhex(selector_hex[2:])
+
+
+def build_calls_for_route(route: Dict) -> List[Dict]:
     step1_pool_info = POOLS[route["step1_pool"]]
     step2_pool_info = POOLS[route["step2_pool"]]
     calls: List[Dict] = []
 
-    def to_bytes(selector_hex: str) -> bytes:
-        return bytes.fromhex(selector_hex[2:])
-
     # step1
     if step1_pool_info["type"] == "v3":
         calls.extend([
-            {"target": step1_pool_info["address"], "callData": to_bytes(SEL_SLOT0)},
-            {"target": step1_pool_info["address"], "callData": to_bytes(SEL_LIQUIDITY)},
+            {"target": step1_pool_info["address"], "callData": _to_bytes(SEL_SLOT0)},
+            {"target": step1_pool_info["address"], "callData": _to_bytes(SEL_LIQUIDITY)},
         ])
     elif step1_pool_info["type"] == "v2":
         calls.extend([
-            {"target": step1_pool_info["address"], "callData": to_bytes(SEL_GETRES)},
-            {"target": step1_pool_info["address"], "callData": to_bytes(SEL_TOKEN0)},
+            {"target": step1_pool_info["address"], "callData": _to_bytes(SEL_GETRES)},
+            {"target": step1_pool_info["address"], "callData": _to_bytes(SEL_TOKEN0)},
         ])
     elif step1_pool_info["type"] == "balancer":
-        calls.append({"target": step1_pool_info["address"], "callData": to_bytes(SEL_GETPOOLID)})
+        calls.append({"target": step1_pool_info["address"], "callData": _to_bytes(SEL_GETPOOLID)})
 
     # step2
     if step2_pool_info["type"] == "v3":
         calls.extend([
-            {"target": step2_pool_info["address"], "callData": to_bytes(SEL_SLOT0)},
-            {"target": step2_pool_info["address"], "callData": to_bytes(SEL_LIQUIDITY)},
+            {"target": step2_pool_info["address"], "callData": _to_bytes(SEL_SLOT0)},
+            {"target": step2_pool_info["address"], "callData": _to_bytes(SEL_LIQUIDITY)},
         ])
     elif step2_pool_info["type"] == "v2":
         calls.extend([
-            {"target": step2_pool_info["address"], "callData": to_bytes(SEL_GETRES)},
-            {"target": step2_pool_info["address"], "callData": to_bytes(SEL_TOKEN0)},
+            {"target": step2_pool_info["address"], "callData": _to_bytes(SEL_GETRES)},
+            {"target": step2_pool_info["address"], "callData": _to_bytes(SEL_TOKEN0)},
         ])
     elif step2_pool_info["type"] == "balancer":
-        calls.append({"target": step2_pool_info["address"], "callData": to_bytes(SEL_GETPOOLID)})
+        calls.append({"target": step2_pool_info["address"], "callData": _to_bytes(SEL_GETPOOLID)})
 
-    try:
-        result = await multicall(calls, require_success=False)
-    except Exception as e:
-        logger.error(f"[{route['name']}] Snapshot multicall failed: {e}")
-        return None
+    return calls
 
+
+def parse_snapshot_for_route(route: Dict, result_slice: List) -> Optional[Dict]:
+    step1_pool_info = POOLS[route["step1_pool"]]
+    step2_pool_info = POOLS[route["step2_pool"]]
     snapshot: Dict[str, Dict] = {"step1": {}, "step2": {}}
     idx = 0
 
-    # step1 parse
+    # step1
     if step1_pool_info["type"] == "v3":
-        if not result[idx][0] or not result[idx+1][0]:
-            logger.error(f"[{route['name']}] V3 step1 call failed")
+        if not result_slice[idx][0] or not result_slice[idx + 1][0]:
             return None
         sqrtP, tick, *_ = decode(
             ["uint160", "int24", "uint16", "uint16", "uint16", "uint8", "bool"],
-            result[idx][1]
+            result_slice[idx][1]
         )
-        (liquidity,) = decode(["uint128"], result[idx+1][1])
+        (liquidity,) = decode(["uint128"], result_slice[idx + 1][1])
         snapshot["step1"] = {
             "type": "v3",
             "sqrtPriceX96": sqrtP,
@@ -564,11 +592,10 @@ async def snapshot_route(route: Dict) -> Optional[Dict]:
         }
         idx += 2
     elif step1_pool_info["type"] == "v2":
-        if not result[idx][0] or not result[idx+1][0]:
-            logger.error(f"[{route['name']}] V2 step1 call failed")
+        if not result_slice[idx][0] or not result_slice[idx + 1][0]:
             return None
-        r0, r1, _ = decode(["uint112", "uint112", "uint32"], result[idx][1])
-        (t0,) = decode(["address"], result[idx+1][1])
+        r0, r1, _ = decode(["uint112", "uint112", "uint32"], result_slice[idx][1])
+        (t0,) = decode(["address"], result_slice[idx + 1][1])
         snapshot["step1"] = {
             "type": "v2",
             "reserve0": r0,
@@ -577,26 +604,24 @@ async def snapshot_route(route: Dict) -> Optional[Dict]:
         }
         idx += 2
     elif step1_pool_info["type"] == "balancer":
-        if not result[idx][0]:
-            logger.error(f"[{route['name']}] Balancer step1 call failed")
+        if not result_slice[idx][0]:
             return None
-        (pool_id,) = decode(["bytes32"], result[idx][1])
+        (pool_id,) = decode(["bytes32"], result_slice[idx][1])
         snapshot["step1"] = {
             "type": "balancer",
             "poolId": pool_id
         }
         idx += 1
 
-    # step2 parse
+    # step2
     if step2_pool_info["type"] == "v3":
-        if not result[idx][0] or not result[idx+1][0]:
-            logger.error(f"[{route['name']}] V3 step2 call failed")
+        if not result_slice[idx][0] or not result_slice[idx + 1][0]:
             return None
         sqrtP, tick, *_ = decode(
             ["uint160", "int24", "uint16", "uint16", "uint16", "uint8", "bool"],
-            result[idx][1]
+            result_slice[idx][1]
         )
-        (liquidity,) = decode(["uint128"], result[idx+1][1])
+        (liquidity,) = decode(["uint128"], result_slice[idx + 1][1])
         snapshot["step2"] = {
             "type": "v3",
             "sqrtPriceX96": sqrtP,
@@ -606,11 +631,10 @@ async def snapshot_route(route: Dict) -> Optional[Dict]:
         }
         idx += 2
     elif step2_pool_info["type"] == "v2":
-        if not result[idx][0] or not result[idx+1][0]:
-            logger.error(f"[{route['name']}] V2 step2 call failed")
+        if not result_slice[idx][0] or not result_slice[idx + 1][0]:
             return None
-        r0, r1, _ = decode(["uint112", "uint112", "uint32"], result[idx][1])
-        (t0,) = decode(["address"], result[idx+1][1])
+        r0, r1, _ = decode(["uint112", "uint112", "uint32"], result_slice[idx][1])
+        (t0,) = decode(["address"], result_slice[idx + 1][1])
         snapshot["step2"] = {
             "type": "v2",
             "reserve0": r0,
@@ -619,10 +643,9 @@ async def snapshot_route(route: Dict) -> Optional[Dict]:
         }
         idx += 2
     elif step2_pool_info["type"] == "balancer":
-        if not result[idx][0]:
-            logger.error(f"[{route['name']}] Balancer step2 call failed")
+        if not result_slice[idx][0]:
             return None
-        (pool_id,) = decode(["bytes32"], result[idx][1])
+        (pool_id,) = decode(["bytes32"], result_slice[idx][1])
         snapshot["step2"] = {
             "type": "balancer",
             "poolId": pool_id
@@ -632,8 +655,50 @@ async def snapshot_route(route: Dict) -> Optional[Dict]:
     return snapshot
 
 # ============================================================
+# SNAPSHOT LOOP – GLOBAL MULTICALL BATCHING
+# ============================================================
+
+
+async def snapshot_loop():
+    global ROUTE_SNAPSHOTS
+    while True:
+        try:
+            await web3_manager.heartbeat()
+
+            all_calls: List[Dict] = []
+            route_call_ranges: List[tuple] = []  # (route_name, start_idx, end_idx)
+
+            for route in ROUTES:
+                if not route.get("enabled", True):
+                    continue
+                route_calls = build_calls_for_route(route)
+                start = len(all_calls)
+                all_calls.extend(route_calls)
+                end = len(all_calls)
+                route_call_ranges.append((route["name"], start, end))
+
+            if not all_calls:
+                await asyncio.sleep(CHECK_INTERVAL)
+                continue
+
+            result = await multicall(all_calls, require_success=False)
+
+            async with SNAPSHOT_LOCK:
+                for route_name, start, end in route_call_ranges:
+                    route = next(r for r in ROUTES if r["name"] == route_name)
+                    slice_res = result[start:end]
+                    snap = parse_snapshot_for_route(route, slice_res)
+                    ROUTE_SNAPSHOTS[route_name] = snap
+
+        except Exception as e:
+            logger.error(f"[SNAPSHOT_LOOP] error: {e}")
+        finally:
+            await asyncio.sleep(CHECK_INTERVAL)
+
+# ============================================================
 # SIMULATION LOGIC
 # ============================================================
+
 
 async def simulate_route(route: Dict, snapshot: Dict) -> Optional[int]:
     step1 = snapshot["step1"]
@@ -679,6 +744,7 @@ async def simulate_route(route: Dict, snapshot: Dict) -> Optional[int]:
 # WORKER
 # ============================================================
 
+
 async def route_worker(route: Dict):
     if not route.get("enabled", True):
         logger.info(f"[{route['name']}] Route disabled, skipping...")
@@ -691,20 +757,13 @@ async def route_worker(route: Dict):
 
     while True:
         try:
-            await web3_manager.heartbeat()
+            async with SNAPSHOT_LOCK:
+                snapshot = ROUTE_SNAPSHOTS.get(route["name"])
 
-            snapshot = await snapshot_route(route)
             if snapshot is None:
-                consecutive_errors += 1
-                if consecutive_errors >= MAX_RETRIES:
-                    logger.error(f"[{route['name']}] Too many consecutive errors, backing off...")
-                    await asyncio.sleep(5)
-                    consecutive_errors = 0
-                else:
-                    await asyncio.sleep(RETRY_BACKOFF)
+                await asyncio.sleep(CHECK_INTERVAL)
                 continue
 
-            consecutive_errors = 0
             current_tick = snapshot["step1"].get("tick", 0)
 
             if current_tick == last_tick and current_tick != 0:
@@ -769,9 +828,10 @@ async def route_worker(route: Dict):
 # MAIN
 # ============================================================
 
+
 async def main():
     logger.info("=" * 60)
-    logger.info("Arbitrage Opportunity Monitor - Server Mode")
+    logger.info("Arbitrage Opportunity Monitor - MEV-Core v3")
     logger.info("=" * 60)
 
     try:
@@ -780,14 +840,19 @@ async def main():
         logger.error(f"❌ Failed to initialize Web3: {e}")
         return
 
-    await telegram_send("🚀 Bot pornit pe server.\nMonitorizare oportunități activată.")
+    await telegram_send("🚀 Bot MEV-Core v3 pornit pe server.\nMonitorizare oportunități activată.")
 
     tasks = []
+
+    # task global de snapshot batching
+    tasks.append(asyncio.create_task(snapshot_loop()))
+
+    # workers pe rute
     for route in ROUTES:
         if route.get("enabled", True):
             tasks.append(asyncio.create_task(route_worker(route)))
 
-    logger.info(f"Started {len(tasks)} workers")
+    logger.info(f"Started {len(tasks)} tasks (1 snapshot loop + {len(ROUTES)} workers)")
     logger.info("Monitoring for opportunities... Press Ctrl+C to stop")
     logger.info("=" * 60)
 
@@ -812,6 +877,7 @@ async def main():
             logger.info(f"Average net profit: ${stats[2]:.2f}")
             logger.info(f"Max net profit: ${stats[3]:.2f}")
         db.close()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
