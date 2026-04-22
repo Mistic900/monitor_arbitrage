@@ -444,35 +444,56 @@ POOLS = {
 
 ROUTES = [
     {
-        "name": "Route 1: V3(0.05%) → Balancer Weighted",
-        "token_in": USDC,
-        "token_mid": WETH,
-        "amount_in": 1000 * 10**6,
-        "min_profit": MIN_PROFIT_MODERATE,
-        "step1_pool": "UNI_V3_USDC_WETH_005",
-        "step2_pool": "BAL_USDC_WETH_WEIGHTED",
-        "enabled": True
+    "name": "R1: UNI V3 0.05% → UNI V3 0.3% (USDC/WETH/USDC)",
+    "token_in": USDC,
+    "token_mid": WETH,
+    "amount_in": 2500 * 10**6,          # 2500 USDC
+    "min_profit": 10 * 10**6,           # 10 USDC
+    "step1_pool": "UNI_V3_USDC_WETH_005",
+    "step2_pool": "UNI_V3_USDC_WETH_03",
+    "enabled": True
     },
     {
-        "name": "Route 2: V3(0.3%) → V2 SushiSwap",
-        "token_in": USDC,
-        "token_mid": WETH,
-        "amount_in": 1500 * 10**6,
-        "min_profit": MIN_PROFIT_MODERATE,
-        "step1_pool": "UNI_V3_USDC_WETH_03",
-        "step2_pool": "SUSHI_V2_USDC_WETH",
-        "enabled": True
+    "name": "R2: UNI V3 0.3% → BAL Weighted (USDC/WETH/USDC)",
+    "token_in": USDC,
+    "token_mid": WETH,
+    "amount_in": 3000 * 10**6,          # 3000 USDC
+    "min_profit": 12 * 10**6,           # 12 USDC
+    "step1_pool": "UNI_V3_USDC_WETH_03",
+    "step2_pool": "BAL_USDC_WETH_WEIGHTED",
+    "enabled": True
     },
     {
-        "name": "Route 3: V3 USDC/DAI → Balancer Stable",
-        "token_in": USDC,
-        "token_mid": DAI,
-        "amount_in": 2000 * 10**6,
-        "min_profit": MIN_PROFIT_CONSERVATIVE,
-        "step1_pool": "UNI_V3_USDC_DAI_001",
-        "step2_pool": "BAL_USDC_DAI_STABLE",
-        "enabled": True
+       "name": "R3: UNI V3 0.05% → SUSHI V2 (USDC/WETH/USDC)",
+    "token_in": USDC,
+    "token_mid": WETH,
+    "amount_in": 2000 * 10**6,          # 2000 USDC
+    "min_profit": 8 * 10**6,            # 8 USDC
+    "step1_pool": "UNI_V3_USDC_WETH_005",
+    "step2_pool": "SUSHI_V2_USDC_WETH",
+    "enabled": True
     },
+    {
+    "name": "R4: UNI V3 0.01% → BAL Stable (USDC/DAI/USDC)",
+    "token_in": USDC,
+    "token_mid": DAI,
+    "amount_in": 5000 * 10**6,          # 5000 USDC
+    "min_profit": 15 * 10**6,           # 15 USDC
+    "step1_pool": "UNI_V3_USDC_DAI_001",
+    "step2_pool": "BAL_USDC_DAI_STABLE",
+    "enabled": True
+},
+{
+    "name": "R5: BAL Stable → UNI V3 0.01% (USDC/DAI/USDC)",
+    "token_in": USDC,
+    "token_mid": DAI,
+    "amount_in": 4000 * 10**6,          # 4000 USDC
+    "min_profit": 12 * 10**6,           # 12 USDC
+    "step1_pool": "BAL_USDC_DAI_STABLE",
+    "step2_pool": "UNI_V3_USDC_DAI_001",
+    "enabled": True
+}
+
 ]
 
 # ============================================================
