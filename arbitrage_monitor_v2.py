@@ -432,7 +432,7 @@ POOLS: Dict[str, Dict] = {
         "fee": 500
     },
     "UNI_V3_USDC_WETH_03": {
-        "address": "0xA374d23C3bA9A0b3e3D3b5f3C2f0D0Ce1F0a5A",
+        "address": "0xA374094527e1673A86dE625aa59517c5dE346d32",
         "type": "v3",
         "fee": 3000
     },
