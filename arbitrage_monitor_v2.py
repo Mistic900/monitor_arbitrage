@@ -26,9 +26,9 @@ MAX_RETRIES = 3
 RETRY_BACKOFF = 0.5  # seconds
 
 # Profit Configuration (în USDC, 6 decimals)
-MIN_PROFIT_CONSERVATIVE = 50 * 10**6   # $50 USDC
-MIN_PROFIT_MODERATE = 20 * 10**6       # $20 USDC
-MIN_PROFIT_AGGRESSIVE = 10 * 10**6     # $10 USDC
+MIN_PROFIT_CONSERVATIVE = 10 * 10**6   # $50 USDC
+MIN_PROFIT_MODERATE = 7 * 10**6       # $20 USDC
+MIN_PROFIT_AGGRESSIVE = 5 * 10**6     # $5 USDC
 
 # Gas Configuration (pentru Polygon)
 ESTIMATED_GAS_USAGE = 350_000  # ~350k gas per arbitrage
@@ -205,6 +205,10 @@ SEL_GETPOOLID = selector("getPoolId()")
 # MULTICALL
 # ============================================================
 
+# ============================================================
+# MULTICALL – versiune corectă (tuple, bytes) + retry logic
+# ============================================================
+
 MULTICALL = "0x275617327c958bD06b5D6b871E7f491D76113dd8"
 MULTICALL_ABI = [{
     "inputs": [
@@ -227,17 +231,37 @@ MULTICALL_ABI = [{
     "type": "function"
 }]
 
-async def multicall(calls: List[Dict]) -> List:
+async def multicall(calls: List[Dict], require_success: bool = False) -> List:
+    """
+    calls: listă de dict-uri:
+        {"target": address_str, "callData": bytes}
+    return: listă de (success: bool, returnData: bytes)
+    """
     contract = get_w3().eth.contract(address=MULTICALL, abi=MULTICALL_ABI)
+
+    # transformăm dict → tuple (address, bytes)
+    formatted_calls = [
+        (call["target"], call["callData"])
+        for call in calls
+    ]
+
     for attempt in range(MAX_RETRIES):
         try:
-            result = await contract.functions.tryAggregate(False, calls).call()
+            result = await contract.functions.tryAggregate(
+                require_success,
+                formatted_calls
+            ).call()
             return result
+
         except Exception as e:
             if attempt == MAX_RETRIES - 1:
-                logger.error(f"Multicall failed after {MAX_RETRIES} attempts: {e}")
+                logger.error(
+                    f"Multicall failed after {MAX_RETRIES} attempts: {e}"
+                )
                 raise
-            logger.warning(f"Multicall attempt {attempt + 1} failed: {e}")
+            logger.warning(
+                f"Multicall attempt {attempt + 1} failed: {e}"
+            )
             await asyncio.sleep(RETRY_BACKOFF * (attempt + 1))
 
 # ============================================================
@@ -457,7 +481,198 @@ ROUTES = [
 # SNAPSHOT LOGIC (identic cu al tău, doar folosește multicall-ul nostru)
 # ============================================================
 
+# ============================================================
+# SNAPSHOT LOGIC – versiune corectă pentru V2/V3/Balancer
+# ============================================================
+
 async def snapshot_route(route: Dict) -> Optional[Dict]:
+    step1_pool_info = POOLS[route["step1_pool"]]
+    step2_pool_info = POOLS[route["step2_pool"]]
+    calls = []
+
+    # helper pentru hex → bytes
+    def to_bytes(selector_hex: str) -> bytes:
+        # selector_hex = "0x12345678"
+        return bytes.fromhex(selector_hex[2:])
+
+    # -----------------------------
+    # STEP 1 – build calls
+    # -----------------------------
+    if step1_pool_info["type"] == "v3":
+        calls.extend([
+            {
+                "target": step1_pool_info["address"],
+                "callData": to_bytes(SEL_SLOT0)
+            },
+            {
+                "target": step1_pool_info["address"],
+                "callData": to_bytes(SEL_LIQUIDITY)
+            }
+        ])
+    elif step1_pool_info["type"] == "v2":
+        calls.extend([
+            {
+                "target": step1_pool_info["address"],
+                "callData": to_bytes(SEL_GETRES)
+            },
+            {
+                "target": step1_pool_info["address"],
+                "callData": to_bytes(SEL_TOKEN0)
+            }
+        ])
+    elif step1_pool_info["type"] == "balancer":
+        calls.append({
+            "target": step1_pool_info["address"],
+            "callData": to_bytes(SEL_GETPOOLID)
+        })
+
+    # -----------------------------
+    # STEP 2 – build calls
+    # -----------------------------
+    if step2_pool_info["type"] == "v3":
+        calls.extend([
+            {
+                "target": step2_pool_info["address"],
+                "callData": to_bytes(SEL_SLOT0)
+            },
+            {
+                "target": step2_pool_info["address"],
+                "callData": to_bytes(SEL_LIQUIDITY)
+            }
+        ])
+    elif step2_pool_info["type"] == "v2":
+        calls.extend([
+            {
+                "target": step2_pool_info["address"],
+                "callData": to_bytes(SEL_GETRES)
+            },
+            {
+                "target": step2_pool_info["address"],
+                "callData": to_bytes(SEL_TOKEN0)
+            }
+        ])
+    elif step2_pool_info["type"] == "balancer":
+        calls.append({
+            "target": step2_pool_info["address"],
+            "callData": to_bytes(SEL_GETPOOLID)
+        })
+
+    # -----------------------------
+    # EXECUȚIE MULTICALL
+    # -----------------------------
+    try:
+        result = await multicall(calls, require_success=False)
+    except Exception as e:
+        logger.error(f"[{route['name']}] Snapshot multicall failed: {e}")
+        return None
+
+    snapshot = {"step1": {}, "step2": {}}
+    idx = 0
+
+    # -----------------------------
+    # STEP 1 – parse
+    # -----------------------------
+    if step1_pool_info["type"] == "v3":
+        if not result[idx][0] or not result[idx+1][0]:
+            logger.error(f"[{route['name']}] V3 step1 call failed")
+            return None
+
+        sqrtP, tick, *_ = decode(
+            ["uint160", "int24", "uint16", "uint16", "uint16", "uint8", "bool"],
+            result[idx][1]
+        )
+        (liquidity,) = decode(["uint128"], result[idx+1][1])
+
+        snapshot["step1"] = {
+            "type": "v3",
+            "sqrtPriceX96": sqrtP,
+            "tick": tick,
+            "liquidity": liquidity,
+            "fee": step1_pool_info["fee"]
+        }
+        idx += 2
+
+    elif step1_pool_info["type"] == "v2":
+        if not result[idx][0] or not result[idx+1][0]:
+            logger.error(f"[{route['name']}] V2 step1 call failed")
+            return None
+
+        r0, r1, _ = decode(["uint112", "uint112", "uint32"], result[idx][1])
+        (t0,) = decode(["address"], result[idx+1][1])
+
+        snapshot["step1"] = {
+            "type": "v2",
+            "reserve0": r0,
+            "reserve1": r1,
+            "token0": t0
+        }
+        idx += 2
+
+    elif step1_pool_info["type"] == "balancer":
+        if not result[idx][0]:
+            logger.error(f"[{route['name']}] Balancer step1 call failed")
+            return None
+
+        (pool_id,) = decode(["bytes32"], result[idx][1])
+        snapshot["step1"] = {
+            "type": "balancer",
+            "poolId": pool_id
+        }
+        idx += 1
+
+    # -----------------------------
+    # STEP 2 – parse
+    # -----------------------------
+    if step2_pool_info["type"] == "v3":
+        if not result[idx][0] or not result[idx+1][0]:
+            logger.error(f"[{route['name']}] V3 step2 call failed")
+            return None
+
+        sqrtP, tick, *_ = decode(
+            ["uint160", "int24", "uint16", "uint16", "uint16", "uint8", "bool"],
+            result[idx][1]
+        )
+        (liquidity,) = decode(["uint128"], result[idx+1][1])
+
+        snapshot["step2"] = {
+            "type": "v3",
+            "sqrtPriceX96": sqrtP,
+            "tick": tick,
+            "liquidity": liquidity,
+            "fee": step2_pool_info["fee"]
+        }
+        idx += 2
+
+    elif step2_pool_info["type"] == "v2":
+        if not result[idx][0] or not result[idx+1][0]:
+            logger.error(f"[{route['name']}] V2 step2 call failed")
+            return None
+
+        r0, r1, _ = decode(["uint112", "uint112", "uint32"], result[idx][1])
+        (t0,) = decode(["address"], result[idx+1][1])
+
+        snapshot["step2"] = {
+            "type": "v2",
+            "reserve0": r0,
+            "reserve1": r1,
+            "token0": t0
+        }
+        idx += 2
+
+    elif step2_pool_info["type"] == "balancer":
+        if not result[idx][0]:
+            logger.error(f"[{route['name']}] Balancer step2 call failed")
+            return None
+
+        (pool_id,) = decode(["bytes32"], result[idx][1])
+        snapshot["step2"] = {
+            "type": "balancer",
+            "poolId": pool_id
+        }
+        idx += 1
+
+    return snapshot
+
     step1_pool_info = POOLS[route["step1_pool"]]
     step2_pool_info = POOLS[route["step2_pool"]]
     calls = []
