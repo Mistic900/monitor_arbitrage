@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sqlite3
 import logging
 import time
@@ -15,10 +16,14 @@ from eth_utils import keccak
 # CONFIGURATION
 # ============================================================
 
-# RPC endpoints
-RPC_WSS_PRIMARY = "wss://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY"
-RPC_WSS_BACKUP  = "wss://polygon-mainnet.infura.io/ws/v3/YOUR_KEY"
-RPC_HTTP_FALLBACK = "https://polygon-rpc.com"
+# RPC endpoints are read from environment variables at runtime inside Web3Manager.
+# Set these in Railway's dashboard:
+#   RPC_WSS_PRIMARY  – primary WSS endpoint (wss:// will be converted to https://)
+#   RPC_WSS_BACKUP   – backup WSS endpoint
+#   ALCHEMY_WSS      – Alchemy WSS endpoint
+#   POLYGON_PUBLIC   – public Polygon HTTP endpoint
+#   MATIC_PUBLIC     – secondary public Polygon HTTP endpoint
+RPC_HTTP_FALLBACK = "https://polygon-rpc.com"  # hard-coded last-resort fallback
 
 # Monitoring Configuration
 CHECK_INTERVAL = 0.05  # base interval
@@ -110,43 +115,87 @@ async def telegram_send(message: str):
         logger.error(f"Telegram send failed: {e}")
 
 # ============================================================
-# WEB3 SETUP – WSS + fallback
+# WEB3 SETUP – HTTP providers with fallback
 # ============================================================
+
+def _wss_to_https(url: str) -> str:
+    """Convert a wss:// URL to https:// (AsyncWeb3 does not support async WebSocket)."""
+    if url.startswith("wss://"):
+        return "https://" + url[len("wss://"):]
+    return url
+
+
+def _build_rpc_endpoints() -> List[Dict]:
+    """
+    Build the ordered list of RPC endpoints at runtime by reading environment
+    variables.  Called inside Web3Manager.__init__() so that os.getenv() is
+    evaluated after Railway has injected the variables, not at import time.
+
+    Priority order:
+      1. RPC_WSS_PRIMARY
+      2. RPC_WSS_BACKUP
+      3. ALCHEMY_WSS
+      4. POLYGON_PUBLIC
+      5. MATIC_PUBLIC
+      6. Hard-coded polygon-rpc.com fallback (always present)
+    """
+    env_vars = [
+        ("RPC_WSS_PRIMARY",  "primary"),
+        ("RPC_WSS_BACKUP",   "backup"),
+        ("ALCHEMY_WSS",      "alchemy"),
+        ("POLYGON_PUBLIC",   "polygon_public"),
+        ("MATIC_PUBLIC",     "matic_public"),
+    ]
+    endpoints = []
+    for env_name, label in env_vars:
+        raw = os.getenv(env_name, "").strip()
+        if raw:
+            url = _wss_to_https(raw)
+            endpoints.append({"label": label, "url": url})
+            logger.info(f"RPC endpoint loaded from {env_name}: {url[:40]}...")
+        else:
+            logger.warning(f"Environment variable {env_name} is not set — skipping.")
+
+    # Always append the hard-coded public fallback last
+    endpoints.append({"label": "fallback", "url": RPC_HTTP_FALLBACK})
+    return endpoints
+
 
 class Web3Manager:
     def __init__(self):
-        self.current_rpc = "primary_wss"
         self.w3 = None
         self.last_heartbeat = 0
         self.heartbeat_interval = 10  # sec
         self.lock = asyncio.Lock()
+        # Build endpoint list at instantiation time (runtime), not at import time
+        self.rpc_endpoints: List[Dict] = _build_rpc_endpoints()
+        self.current_index: int = 0
+        self.current_rpc: str = (
+            self.rpc_endpoints[0]["label"] if self.rpc_endpoints else "fallback"
+        )
 
     async def init(self):
-        await self._connect("primary_wss")
+        await self._connect(0)
 
-    async def _connect(self, which: str):
-        if which == "primary_wss":
-            logger.info("Connecting to PRIMARY WSS...")
-            self.w3 = AsyncWeb3(AsyncWeb3.AsyncWebsocketProvider(RPC_WSS_PRIMARY))
-            self.current_rpc = "primary_wss"
-        elif which == "backup_wss":
-            logger.info("Connecting to BACKUP WSS...")
-            self.w3 = AsyncWeb3(AsyncWeb3.AsyncWebsocketProvider(RPC_WSS_BACKUP))
-            self.current_rpc = "backup_wss"
-        elif which == "http":
-            logger.info("Connecting to HTTP fallback...")
-            self.w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(RPC_HTTP_FALLBACK))
-            self.current_rpc = "http"
-        else:
-            raise ValueError("Unknown RPC type")
+    async def _connect(self, index: int):
+        if not self.rpc_endpoints:
+            raise RuntimeError("No RPC endpoints configured.")
+        index = index % len(self.rpc_endpoints)
+        endpoint = self.rpc_endpoints[index]
+        label = endpoint["label"]
+        url = endpoint["url"]
+        logger.info(f"Connecting to RPC '{label}': {url[:40]}...")
+        self.w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(url))
+        self.current_index = index
+        self.current_rpc = label
 
         # test connection
         try:
             block = await self.w3.eth.block_number
-            logger.info(f"✅ Connected via {self.current_rpc}, block={block}")
-            await telegram_send(f"✅ RPC conectat: <b>{self.current_rpc}</b>, block={block}")
+            logger.info(f"✅ Connected via '{label}', block={block}")
+            await telegram_send(f"✅ RPC conectat: <b>{label}</b>, block={block}")
         except Exception as e:
-            logger.error(f"RPC connect failed ({which}): {e}")
+            logger.error(f"RPC connect failed ('{label}'): {e}")
             raise
 
     async def heartbeat(self):
@@ -159,26 +208,25 @@ class Web3Manager:
             try:
                 _ = await self.w3.eth.block_number
             except Exception as e:
-                logger.error(f"Heartbeat failed on {self.current_rpc}: {e}")
+                logger.error(f"Heartbeat failed on '{self.current_rpc}': {e}")
                 await telegram_send(f"⚠️ Heartbeat failed pe <b>{self.current_rpc}</b>: {e}")
                 await self._failover()
 
     async def _failover(self):
-        order = ["primary_wss", "backup_wss", "http"]
-        try_next = {
-            "primary_wss": "backup_wss",
-            "backup_wss": "http",
-            "http": "primary_wss"
-        }
-        next_rpc = try_next[self.current_rpc]
+        next_index = (self.current_index + 1) % len(self.rpc_endpoints)
+        next_label = self.rpc_endpoints[next_index]["label"]
         try:
-            await self._connect(next_rpc)
+            await self._connect(next_index)
             await telegram_send(f"🔄 RPC failover → <b>{self.current_rpc}</b>")
         except Exception as e:
-            logger.error(f"Failover to {next_rpc} failed: {e}")
-            # ultima redută: HTTP
-            if next_rpc != "http":
-                await self._connect("http")
+            logger.error(f"Failover to '{next_label}' failed: {e}")
+            # Try the hard-coded fallback (last entry) as last resort
+            fallback_index = len(self.rpc_endpoints) - 1
+            if next_index != fallback_index:
+                try:
+                    await self._connect(fallback_index)
+                except Exception as e2:
+                    logger.error(f"Fallback connect also failed: {e2}")
 
 web3_manager = Web3Manager()
 
@@ -231,12 +279,16 @@ MULTICALL_ABI = [{
     "type": "function"
 }]
 
+<<<<<<< HEAD
 async def multicall(calls: List[Dict], require_success: bool = False) -> List:
     """
     calls: listă de dict-uri:
         {"target": address_str, "callData": bytes}
     return: listă de (success: bool, returnData: bytes)
     """
+=======
+async def multicall(calls: List[tuple]) -> List:
+>>>>>>> 98a2ab14eae21e5c28cb615d69e0d2628a605931
     contract = get_w3().eth.contract(address=MULTICALL, abi=MULTICALL_ABI)
 
     # transformăm dict → tuple (address, bytes)
@@ -680,30 +732,30 @@ async def snapshot_route(route: Dict) -> Optional[Dict]:
     # step1
     if step1_pool_info["type"] == "v3":
         calls.extend([
-            {"target": step1_pool_info["address"], "callData": SEL_SLOT0},
-            {"target": step1_pool_info["address"], "callData": SEL_LIQUIDITY},
+            (step1_pool_info["address"], SEL_SLOT0),
+            (step1_pool_info["address"], SEL_LIQUIDITY),
         ])
     elif step1_pool_info["type"] == "v2":
         calls.extend([
-            {"target": step1_pool_info["address"], "callData": SEL_GETRES},
-            {"target": step1_pool_info["address"], "callData": SEL_TOKEN0},
+            (step1_pool_info["address"], SEL_GETRES),
+            (step1_pool_info["address"], SEL_TOKEN0),
         ])
     elif step1_pool_info["type"] == "balancer":
-        calls.append({"target": step1_pool_info["address"], "callData": SEL_GETPOOLID})
+        calls.append((step1_pool_info["address"], SEL_GETPOOLID))
 
     # step2
     if step2_pool_info["type"] == "v3":
         calls.extend([
-            {"target": step2_pool_info["address"], "callData": SEL_SLOT0},
-            {"target": step2_pool_info["address"], "callData": SEL_LIQUIDITY},
+            (step2_pool_info["address"], SEL_SLOT0),
+            (step2_pool_info["address"], SEL_LIQUIDITY),
         ])
     elif step2_pool_info["type"] == "v2":
         calls.extend([
-            {"target": step2_pool_info["address"], "callData": SEL_GETRES},
-            {"target": step2_pool_info["address"], "callData": SEL_TOKEN0},
+            (step2_pool_info["address"], SEL_GETRES),
+            (step2_pool_info["address"], SEL_TOKEN0),
         ])
     elif step2_pool_info["type"] == "balancer":
-        calls.append({"target": step2_pool_info["address"], "callData": SEL_GETPOOLID})
+        calls.append((step2_pool_info["address"], SEL_GETPOOLID))
 
     try:
         result = await multicall(calls)
