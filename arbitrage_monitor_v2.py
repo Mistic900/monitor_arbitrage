@@ -415,10 +415,29 @@ BAL_ABI = [{
 async def sim_bal(pid: bytes, tin: str, tout: str, amt: int) -> int:
     try:
         vault = get_w3().eth.contract(address=BAL_VAULT, abi=BAL_ABI)
-        swaps = [{"poolId": pid, "assetInIndex": 0, "assetOutIndex": 1, "amount": amt, "userData": b""}]
-        result = await asyncio.wait_for(vault.functions.queryBatchSwap(0, swaps, [tin, tout]).call(), timeout=10)
-        return abs(int(result[1]))
-    except:
+
+        swaps = [{
+            "poolId": pid,
+            "assetInIndex": 0,
+            "assetOutIndex": 1,
+            "amount": amt,
+            "userData": b""
+        }]
+
+        result = await asyncio.wait_for(
+            vault.functions.queryBatchSwap(0, swaps, [tin, tout]).call(),
+            timeout=10
+        )
+
+        # Web3 returnează (int256[],) → extragem vectorul
+        if isinstance(result, (list, tuple)):
+            deltas = result[0]
+        else:
+            deltas = result
+
+        # deltas[0] = delta pentru tin, deltas[1] = delta pentru tout (negativ)
+        return abs(int(deltas[1]))
+    except Exception:
         return 0
 
 # ============================================================
