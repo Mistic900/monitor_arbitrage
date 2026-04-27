@@ -473,7 +473,7 @@ DAI = "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063"
 
 POOLS = {
     "U3_005": {"addr": Web3.to_checksum_address("0x45dDa9cb7c25131DF268515131f647d726f50608"), "type": "v3", "fee": 500},
-    "U3_03": {"addr": Web3.to_checksum_address("0xA374d23C3bA9A0b3e3D3b5f3C2f0D0Ce1F0a5A"), "type": "v3", "fee": 3000},
+    "U3_03": {"addr": Web3.to_checksum_address("0xA374094527e1673A86dE625aa59517c5dE346d32"), "type": "v3", "fee": 3000},
     "U3_001": {"addr": Web3.to_checksum_address("0x5645dCB64c059aa11212707fbf4E7F984440a8Cf"), "type": "v3", "fee": 100},
     "SU2": {"addr": Web3.to_checksum_address("0x34965ba0ac2451A34a0471F04CCa3F990b8dea27"), "type": "v2"},
     "BAL_W": {"addr": Web3.to_checksum_address("0x0297e37f1873D2DAB4487Aa67cD56B58E2F27875"), "type": "bal"},
